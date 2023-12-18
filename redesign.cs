@@ -5,6 +5,12 @@ using System.Security.AccessControl;
 using System.Collections.Generic;
 using static Common;
 using System.Threading.Tasks.Dataflow;
+using System.Xml.Linq;
+using System.Xml.Schema;
+using System.Linq.Expressions;
+
+
+
 
 public class Program {
     static void Main(string[] args) {
@@ -13,6 +19,8 @@ public class Program {
 }
 
 public class Common {
+    const byte FGPositionSoftLimit = 0x0b;
+    
     Tile[,] ProcessedCHR = new Tile[2, 256];
 
     Palette[,] AreaPalettes = new Palette[4, 4];
@@ -21,24 +29,30 @@ public class Common {
     Palette BowserPalette;
 
     Dictionary<ushort, Bitmap> Metatiles = [];
+    Dictionary<ushort, Bitmap> Enemies = [];
 
     private BackgroundItem[,] BackSceneryData = new BackgroundItem[3, 48];
     private BackgroundElement[] BackSceneryMetatiles = new BackgroundElement[12];
 
+    private byte[,] Foregrounds = new byte[3, 13];
+    public ushort[] TerrainPatterns = new ushort[16];
+    public byte[] TerrainMetatiles = new byte[4];
+
     public Common(string[] args) {
-        byte[] CHRRAW, PalettesRAW, MetatilesRAW, SceneryRAW;
+        byte[] CHRRAW, PalettesRAW, MetatilesRAW, SceneryRAW, EnemyRAW;
         try {
             CHRRAW = File.ReadAllBytes(args.Length == 0 ? ".CHR" : args[0]);
             PalettesRAW = File.ReadAllBytes(args.Length == 0 ? "palettes.bin" : args[1]);
             MetatilesRAW = File.ReadAllBytes(args.Length == 0 ? "metatiles.bin" : args[2]);
             SceneryRAW = File.ReadAllBytes(args.Length == 0 ? "scenery.bin" : args[3]);
+            EnemyRAW = File.ReadAllBytes(args.Length == 0 ? "enemydata.bin" : args[4]);
         } catch (Exception ex) {
             Console.WriteLine($"An error occurred: {ex.Message}");
             return;
         }
-        
+
         ProcessCHR(ref ProcessedCHR, ref CHRRAW);
-        
+
         void NormalizePalettes() {
             ushort peek = 3;
             byte[] thisPalette = new byte[4];
@@ -70,18 +84,18 @@ public class Common {
             }
             BowserPalette = new Palette(thisPalette, NESPALETTE);
         };
-
-        NormalizePalettes();
-
         void BuildMetatiles() {
 
             Bitmap BuildMetatile(Tile[] Tiles, Palette _Palette) {
-                Bitmap Return = new Bitmap(16, 16);
+                Bitmap Return = new(16, 16);
+                Return.MakeTransparent();
                 for (byte Width = 0, _Tile = 0; Width < 2; Width++) {
                     for (byte Height = 0; Height < 2; Height++, _Tile++) {
                         for (byte Y = 0; Y < 8; Y++) {
                             for (byte X = 0; X < 8; X++) {
-                                Return.SetPixel((Width * 8) + X, (Height * 8) + Y, _Palette.Data[Tiles[_Tile].Data[Y, X]]);
+                                byte thisBit = Tiles[_Tile].Data[Y, X];
+                                if (thisBit == 0) continue;
+                                Return.SetPixel((Width * 8) + X, (Height * 8) + Y, _Palette.Data[thisBit]);
                             }
                         }
                     }
@@ -98,11 +112,11 @@ public class Common {
                     thisMetatile[_Tile] = GetTile(false, MetatilesRAW[peek]);
                 }
                 for (byte AreaType = 0; AreaType < 4; AreaType++) {
-                    Metatiles[(ushort)((AreaType << 8) |Metatile)] = BuildMetatile(thisMetatile, AreaPalettes[AreaType, 0]);
+                    Metatiles[(ushort)((AreaType << 8) | Metatile)] = BuildMetatile(thisMetatile, AreaPalettes[AreaType, 0]);
                 }
 
                 for (byte AreaStyle = 1; AreaStyle < 4; AreaStyle++) {
-                    Metatiles[(ushort)((AreaStyle << 10) | Metatile)] = BuildMetatile(thisMetatile, AreaStylePalettes[AreaStyle-1]);
+                    Metatiles[(ushort)((AreaStyle << 10) | Metatile)] = BuildMetatile(thisMetatile, AreaStylePalettes[AreaStyle - 1]);
                 }
 
                 Metatiles[(ushort)((0x1000) | Metatile)] = BuildMetatile(thisMetatile, AreaPalettes[3, 0]);
@@ -121,12 +135,11 @@ public class Common {
                 }
             }
         }
-
         void NormalizeScenery() {
             ushort peek = 3;
-            for (byte BackgroundStyle = 0; BackgroundStyle < 3; BackgroundStyle ++) {
+            for (byte BackgroundStyle = 0; BackgroundStyle < 3; BackgroundStyle++) {
                 for (byte _BackgroundItem = 0; _BackgroundItem < 48; _BackgroundItem++, peek++) {
-                    BackSceneryData[BackgroundStyle, _BackgroundItem] = new BackgroundItem(SceneryRAW[peek]);
+                    if (SceneryRAW[peek] != 0) BackSceneryData[BackgroundStyle, _BackgroundItem] = new BackgroundItem(SceneryRAW[peek]);
                 }
             }
 
@@ -137,15 +150,95 @@ public class Common {
                 }
                 BackSceneryMetatiles[Element] = new BackgroundElement(thisElement);
             }
+            peek += 3;
+            for (byte Foreground = 0; Foreground < 3; Foreground++) {
+                for (byte _Metatile = 0; _Metatile < 13; _Metatile++, peek++) {
+                    Foregrounds[Foreground, _Metatile] = SceneryRAW[peek];
+                }
+            }
+            
+            for (byte Metatile = 0; Metatile < 4; Metatile++, peek++) {
+                TerrainMetatiles[Metatile] = SceneryRAW[peek];
+            }
+
+            for (byte TerrainByte = 0; TerrainByte < 32; TerrainByte++, peek++) {
+                TerrainPatterns[TerrainByte >> 1] |= SceneryRAW[peek];
+                if (TerrainByte % 2 == 0) TerrainPatterns[TerrainByte >> 1] <<= 8;
+            }
+        }
+        void NormalizeEnemies() {
+
+            Bitmap BuildSpriteTile(Tile[] Tiles, Palette _Palette) {
+                Bitmap Return = new(16, 24);
+                Return.MakeTransparent();
+                for (byte Height = 0, _Tile = 0; Height < 3; Height++) {
+                    for (byte Width = 0; Width < 2; Width++, _Tile++) {
+                        for (byte Y = 0; Y < 8; Y++) {
+                            for (byte X = 0; X < 8; X++) {
+                                byte thisBit = Tiles[_Tile].Data[Y, X];
+                                if (thisBit == 0) continue;
+                                Return.SetPixel((Width * 8) + X, (Height * 8) + Y, _Palette.Data[thisBit]);
+                            }
+                        }
+                    }
+                }
+                return Return;
+            }
+            for (byte EnemyID = 0; EnemyID < 27; EnemyID++) {
+                Tile[] thisEnemy = new Tile[6];
+                for (byte _Tile = 0; _Tile < 6; _Tile++) {
+                    thisEnemy[_Tile] = ProcessedCHR[0, EnemyRAW[EnemyRAW[258 + EnemyID] + _Tile]];
+                }
+                for (byte AreaType = 0; AreaType < 3; AreaType++) {
+                    Bitmap Result = BuildSpriteTile(thisEnemy, EnemyPalettes[AreaType, EnemyRAW[285 + EnemyID] & 0b11]);
+                    Result.Save(AreaType.ToString() + EnemyID.ToString() + ".bmp");
+                    Enemies[(ushort)((AreaType << 8) | EnemyID)] = BuildSpriteTile(thisEnemy, EnemyPalettes[AreaType, EnemyRAW[285 + EnemyID] & 0b11]);
+                }
+            }
         }
 
+        NormalizePalettes();
         BuildMetatiles();
+        NormalizeScenery();
+        NormalizeEnemies();
 
-        foreach (KeyValuePair<ushort, Bitmap> kvp in Metatiles) { 
-
-            kvp.Value.Save("./output/" + kvp.Key.ToString() + ".bmp");
+        foreach (KeyValuePair<ushort, Bitmap> kvp in Enemies) {
+            kvp.Value.Save(kvp.Key.ToString() + ".bmp");
         }
-        
+    }
+
+    public Bitmap GetMetatile(byte AreaType, byte AreaStyle, byte MetatileID, bool CastleOverride){
+        if (CastleOverride) return Metatiles[(ushort)(0x1000 | MetatileID)];
+        if ((MetatileID & 0xc0) != 0) AreaStyle = 0;
+        else if (AreaStyle != 0) AreaType = 0;
+        return Metatiles[(ushort)((AreaStyle << 10) | (AreaType << 8) | MetatileID)];
+    }
+    public Bitmap[]? GetBackgroundMetatiles(byte Background, byte Collumn, byte AreaType, byte AreaStyle, bool CastleOverride) {
+        Bitmap[] thisCollumn = new Bitmap[3];
+        if (BackSceneryData[Background, Collumn] == null) return null;
+        for (byte Metatile = 0; Metatile < 3; Metatile++){   
+           thisCollumn[Metatile] = GetMetatile(AreaType, AreaStyle, BackSceneryMetatiles[BackSceneryData[Background, Collumn].Element].Data[Metatile], CastleOverride);
+        }
+        return thisCollumn;
+    }
+    public Bitmap[] GetForegroundMetatiles(byte Foreground, byte AreaType, byte AreaStyle, bool CastleOverride) {
+        Bitmap[] Return = new Bitmap[13];
+        for (byte Metatile = 0; Metatile < 13; Metatile++) {
+            Return[Metatile] = GetMetatile(AreaType, AreaStyle, Foregrounds[Foreground, Metatile], CastleOverride);
+        }
+        return Return;
+    }
+    public Bitmap[] GetTerrain(byte Terrain, byte AreaType, byte AreaStyle, bool CastleOverride) {
+        Bitmap[] Return = new Bitmap[13];
+        for (byte Metatile = 0; Metatile < 13; Metatile++) {
+            if ((Metatile & 8) == 0) {
+                if (((TerrainPatterns[Terrain] >> 8) & (0b1 << Metatile)) == 0) continue;
+            } else {
+                if (((TerrainPatterns[Terrain] & 0xff) & (0b1 << (Metatile - 8))) == 0) continue;
+            }
+            Return[Metatile] = GetMetatile(AreaType, AreaStyle, TerrainMetatiles[AreaType], CastleOverride);
+        }
+        return Return;
     }
 
     public class Tile {
@@ -159,7 +252,6 @@ public class Common {
             }
         }
     }
-
     public class Palette {
         public Color[] Data = new Color[4];
         public Palette(byte[] PaletteIDs, Color[] SYSPALETTE) {
@@ -178,11 +270,9 @@ public class Common {
     public Tile GetTile(bool isOAM, byte ID){
         return ProcessedCHR[!isOAM ? 1 : 0, ID];
     }
-
     public Tile GetTile(bool isOAM, byte x, byte y){
         return ProcessedCHR[!isOAM ?  1 : 0, (y << 4) | x];
     }
-
     public Tile GetTile(ushort ID){
         return ProcessedCHR[ID >> 8, ID & 0xff];
     }
@@ -193,35 +283,15 @@ public class Common {
             Data = _Data;
         }
     }
-
     public class BackgroundItem {
         public byte y, Element;
         public BackgroundItem(byte Data) {
             y = (byte)(Data >> 4);
-            Element = (byte)(Data & 0x0f);
+            Element = (byte)(--Data & 0x0f);
         }
     }
 
-    public BackgroundElement GetBackground(byte BackgroundStyle, byte BackgroundCollumn) {
-        return BackSceneryMetatiles[BackSceneryData[BackgroundStyle, BackgroundCollumn].Element];
-    }
-
-    public Bitmap[] GetBackgroundMetatiles(byte BackgroundStyle, byte BackgroundCollumn, byte AreaType, byte AreaStyle, byte Foreground) {
-        Bitmap[] Return = new Bitmap[3];
-        if (Foreground == 0b111) {
-            for (byte _Metatile = 0; _Metatile < 3; _Metatile++) {
-                Return[_Metatile] = Metatiles[(ushort)((0x1000) | (BackSceneryMetatiles[BackSceneryData[BackgroundStyle, BackgroundCollumn].Element].Data[_Metatile]) & 0x3f)];
-            }
-        } else {
-            for (byte _Metatile = 0; _Metatile < 3; _Metatile++) {
-                byte thisMetatile = BackSceneryMetatiles[BackSceneryData[BackgroundStyle, BackgroundCollumn].Element].Data[_Metatile];
-                Return[_Metatile] = Metatiles[(ushort)(((thisMetatile & 0xc0) != 0 ? AreaStyle << 10 : 0) | (AreaType << 8) | thisMetatile)];
-            }
-        }
-        return Return;
-    }
-
-    public readonly static Color[] NESPALETTE = {
+    public readonly static Color[] NESPALETTE = [
                         Color.FromArgb(0xff, 0x62, 0x62, 0x62), // grey         0x00
                         Color.FromArgb(0xff, 0x00, 0x1f, 0xb2), // dark blue    0x01
                         Color.FromArgb(0xff, 0x24, 0x04, 0xcb), // dark blue    0x02
@@ -286,5 +356,5 @@ public class Common {
                         Color.FromArgb(0xff, 0xb8, 0xb8, 0xb8), // light grey   0x3d
                         Color.FromArgb(0xff, 0x00, 0x00, 0x00), // black        0x3e
                         Color.FromArgb(0xff, 0x00, 0x00, 0x00), // black        0x3f
-    };
+    ];
 }
