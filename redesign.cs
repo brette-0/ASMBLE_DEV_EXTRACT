@@ -19,9 +19,86 @@ public class Program {
 }
 
 public class Common {
+    const byte
+            mushroomblock = 0,
+            coinblock = 1,
+            hiddencoinblock = 2,
+            hiddenlifeblock = 3,
+            mushroombrickblock = 4,
+            vinebrickblock = 5,
+            starbrickblock = 6,
+            coinbrickblock = 7,
+            lifebrickblock = 8,
+            sidewaypipe = 9,
+            usedblock = 10,
+            springboard = 11,
+            reversedpipe = 12,
+            flagpole = 14,
+            treething = 16, // expands to 16 + 0x0f
+            horizontalbricks = 32,
+            horizontalblock = 48,
+            horizontalcoins = 60,
+            verticalbricks = 72,
+            verticalblocks = 84,
+            pipenoenter = 96,
+            pipeenter = 104,
+
+            hole = 0,
+            balancerope = 0x10,
+            lowbridge = 0x20,
+            middlebridge = 0x30,
+            highbridge = 0x40,
+            holewater = 0x50,
+            lowqblockrow = 0x60,
+            highqblockrow = 0x70,
+
+            pageflag = 0x80,
+
+            pageskip = 0,
+            reversedpipe2 = 0x40,
+            flagpole2 = 0x41,
+            axe = 0x42,
+            rope = 0x43,
+            bowserbridge = 0x44,
+            warpscrollstop = 0x45,
+            scrollstop = 0x46,
+            scrollstop2 = 0x47,
+            flyingcheep = 0x48,
+            cheepfrenzy = 0x49,
+            frenzystop = 0x4a,
+            loopcommand = 0x4b,
+            backgroundchangenight = 0x4c,
+            crashbypassable = 0x4d,
+            crash = 0x4e, // expands to 50
+            glitchobj1 = 0x51,
+            crash2 = 0x52, // expands to 0x7f
+
+            /* xe
+                - : abcc dddd
+                a = page flag
+                b = hasalternate palette (mushroom)
+                c = Background
+                d = Terrain
+            */
+
+            // xf
+            liftrope = 0, // expands to 0x0f
+            liftropebalance = 0x10, // expands to 0x1f
+            castle = 0x20, // expands to 2a
+            castlecrash = 0x2b, // expands to 2f
+            staircase = 0x30, // expands to 37
+            fixedstaircase = 0x38,
+            buggedstaircase = 0x39, // expands to 3f
+            longreverselpipe = 0x40, // expands to 4f
+            residualrope = 0x50; // expands to 5f
+
+
+
     const byte FGPositionSoftLimit = 0x0b;
-    
+
     Tile[,] ProcessedCHR = new Tile[2, 256];
+    Spawn[] PlayerSpawns = new Spawn[8];
+    ushort[] Timers = new ushort[4];
 
     Palette[,] AreaPalettes = new Palette[4, 4];
     Palette[,] EnemyPalettes = new Palette[4, 4];
@@ -29,7 +106,7 @@ public class Common {
     Palette BowserPalette;
 
     Dictionary<ushort, Bitmap> Metatiles = [];
-    Dictionary<ushort, Bitmap> Enemies = [];
+    Dictionary<ushort, Bitmap> EnemiesIMG = [];
 
     private BackgroundItem[,] BackSceneryData = new BackgroundItem[3, 48];
     private BackgroundElement[] BackSceneryMetatiles = new BackgroundElement[12];
@@ -38,14 +115,99 @@ public class Common {
     public ushort[] TerrainPatterns = new ushort[16];
     public byte[] TerrainMetatiles = new byte[4];
 
+    struct AreaObject {
+        public byte x, y, id;  // page position and id
+        public bool pageflag;
+
+        public AreaObject(byte xy, byte id) : this() {
+            this.x = (byte)(xy >> 4);
+            this.y = (byte)(xy & 0x0f);
+            this.id = (byte)(xy & 0x7f);
+            this.pageflag = (id & 0x80) == 0x80;
+        }
+    }
+
+    struct AreaPointer {
+        byte world, page, area_id;
+
+        public AreaPointer(byte pointer, ref byte area_id) : this() {
+            this.world = (byte)(pointer >> 5);
+            this.page = (byte)(pointer & 0x1f);
+            this.page = area_id;
+        }
+    }
+
+    struct Enemy {
+        byte x, y, id;  // enemy position
+        AreaPointer? pointer;
+        bool pageflag;
+        bool hardmode;
+
+        public Enemy(byte xy, byte id, byte? pointer) : this() {
+            this.x = (byte)(xy >> 4);
+            this.y = (byte)(xy & 0x0f);
+            this.id = (byte)(xy & 0x3f);
+            this.hardmode = (id & 0x40) == 0x40;
+            this.pageflag = (id & 0x80) == 0x80;
+            if (this.pointer != null) {
+                this.pointer = new AreaPointer(pointer ?? 0, ref id);
+            }
+        }
+
+
+    }
+
+    class Area {
+        List<AreaObject> Objects;
+        byte Foreground, Background, Terrain;
+
+        bool introarea;
+        bool spawndeath;
+        bool playerwalk;
+
+        Spawn YPOS;
+        ushort Timer;
+        public Area(List<AreaObject> _Objects, ref Spawn _YPOS, ref ushort _Timer, byte _Foreground, byte _Background, byte _Terrain) {
+            Objects = _Objects; YPOS = _YPOS; Timer = _Timer; Foreground = _Foreground; Background = _Background; Terrain = _Terrain;
+            if (_YPOS.isintro) {
+                introarea = true;
+                spawndeath = false;
+                playerwalk = !YPOS.hasBGdata;
+            } else {
+                introarea = false;
+                spawndeath = Timer == 0;
+                playerwalk = false;
+            }
+        }
+    }
+
+    struct LevelArea {
+        Area AreaData;
+        Enemy EnemyData;
+    }
+
+    struct Spawn {
+        byte y;
+        public bool hasBGdata, isintro;
+        public Spawn(byte y, bool hasBGdata, bool isintro) : this() {
+            this.y = y; this.hasBGdata = hasBGdata; this.isintro = isintro;
+        }
+    }
+
+    Dictionary<byte, Area> Areas;
+    Dictionary<byte, List<Enemy>> Enemies;
+
+    List<List<LevelArea>> Worlds;
+
     public Common(string[] args) {
-        byte[] CHRRAW, PalettesRAW, MetatilesRAW, SceneryRAW, EnemyRAW;
+        byte[] CHRRAW, PalettesRAW, MetatilesRAW, SceneryRAW, EnemyRAW, spawningRAW;
         try {
             CHRRAW = File.ReadAllBytes(args.Length == 0 ? ".CHR" : args[0]);
             PalettesRAW = File.ReadAllBytes(args.Length == 0 ? "palettes.bin" : args[1]);
             MetatilesRAW = File.ReadAllBytes(args.Length == 0 ? "metatiles.bin" : args[2]);
             SceneryRAW = File.ReadAllBytes(args.Length == 0 ? "scenery.bin" : args[3]);
             EnemyRAW = File.ReadAllBytes(args.Length == 0 ? "enemydata.bin" : args[4]);
+            spawningRAW = File.ReadAllBytes(args.Length == 0 ? "spawning.bin" : args[5]);
         } catch (Exception ex) {
             Console.WriteLine($"An error occurred: {ex.Message}");
             return;
@@ -61,14 +223,14 @@ public class Common {
                     for (byte PaletteColor = 0; PaletteColor < 4; PaletteColor++) {
                         thisPalette[PaletteColor] = PalettesRAW[peek++];
                     }
-                    AreaPalettes[AreaType, AreaPalette] = new Palette(thisPalette, NESPALETTE);
+                    AreaPalettes[AreaType, AreaPalette] = new Palette(thisPalette, Common.NESPALETTE);
                 }
 
                 for (byte SpritePalette = 0; SpritePalette < 4; SpritePalette++) {
                     for (byte PaletteColor = 0; PaletteColor < 4; PaletteColor++) {
                         thisPalette[PaletteColor] = PalettesRAW[peek++];
                     }
-                    EnemyPalettes[AreaType, SpritePalette] = new Palette(thisPalette, NESPALETTE);
+                    EnemyPalettes[AreaType, SpritePalette] = new Palette(thisPalette, Common.NESPALETTE);
                 }
                 peek += 4;
             }
@@ -76,13 +238,13 @@ public class Common {
                 for (byte PaletteColor = 0; PaletteColor < 4; PaletteColor++) {
                     thisPalette[PaletteColor] = PalettesRAW[peek++];
                 }
-                AreaStylePalettes[AreaStyle] = new Palette(thisPalette, NESPALETTE);
+                AreaStylePalettes[AreaStyle] = new Palette(thisPalette, Common.NESPALETTE);
                 peek += 4;
             }
             for (byte BowserColor = 0; BowserColor < 4; BowserColor++) {
                 thisPalette[BowserColor] = PalettesRAW[peek++];
             }
-            BowserPalette = new Palette(thisPalette, NESPALETTE);
+            BowserPalette = new Palette(thisPalette, Common.NESPALETTE);
         };
         void BuildMetatiles() {
 
@@ -156,7 +318,7 @@ public class Common {
                     Foregrounds[Foreground, _Metatile] = SceneryRAW[peek];
                 }
             }
-            
+
             for (byte Metatile = 0; Metatile < 4; Metatile++, peek++) {
                 TerrainMetatiles[Metatile] = SceneryRAW[peek];
             }
@@ -192,22 +354,83 @@ public class Common {
                 for (byte AreaType = 0; AreaType < 3; AreaType++) {
                     Bitmap Result = BuildSpriteTile(thisEnemy, EnemyPalettes[AreaType, EnemyRAW[285 + EnemyID] & 0b11]);
                     Result.Save(AreaType.ToString() + EnemyID.ToString() + ".bmp");
-                    Enemies[(ushort)((AreaType << 8) | EnemyID)] = BuildSpriteTile(thisEnemy, EnemyPalettes[AreaType, EnemyRAW[285 + EnemyID] & 0b11]);
+                    EnemiesIMG[(ushort)((AreaType << 8) | EnemyID)] = BuildSpriteTile(thisEnemy, EnemyPalettes[AreaType, EnemyRAW[285 + EnemyID] & 0b11]);
                 }
             }
         }
 
-        NormalizePalettes();
-        BuildMetatiles();
-        NormalizeScenery();
-        NormalizeEnemies();
+        Area NormalizeAreaData(byte[] LevelData) {
+            /*
+                Normalize Level Information (and header)
+            */
 
-        foreach (KeyValuePair<ushort, Bitmap> kvp in Enemies) {
-            kvp.Value.Save(kvp.Key.ToString() + ".bmp");
+            ushort thisTimer = Timers[(byte)(LevelData[0] >> 6)];
+            byte thisYpos = (byte)((LevelData[0] >> 3) & 0b11);
+            byte thisForeground = (byte)(LevelData[0] & 0b111);
+
+            bool cloud = (LevelData[1] & 0x80) == 0x80;
+            bool altpal = (LevelData[1] & 0x40) == 0x40;
+            byte thisBG = (byte)((LevelData[1] >> 4) & 0b11);
+            byte thisTerrain = (byte)(LevelData[1] & 0x0f);
+
+            List<AreaObject> thisObjects = [];
+
+            for (ushort offset = 2; offset < LevelData.Length; offset += 2) {
+                thisObjects.Append(new AreaObject(LevelData[offset], LevelData[offset + 1]));
+            }
+
+            return new Area(thisObjects, ref PlayerSpawns[thisYpos], ref thisTimer, thisForeground, thisBG, thisTerrain);
+
         }
+
+        List<Enemy> NormalizeEnemyData(byte[] EnemyData) {
+            List<Enemy> thisEnemies = [];
+
+            for (ushort offset = 0; offset < EnemyData.Length;) {
+                // expect IndexError here
+                thisEnemies.Add(new Enemy(EnemyData[offset], EnemyData[offset + 1], ((EnemyData[offset] & 0x0f) == 0x0e ? EnemyData[offset + 2] : null)));
+                offset += (ushort)((EnemyData[offset] & 0x0f) == 0x0e ? 3 : 2);
+            }
+
+            return thisEnemies;
+        }
+
+        /*void NormalizeLevels() {
+            List<string> LevelLines = LevelASM.Split('\n').ToList();
+            int offset = 0, temp = 0;
+            byte worlds = (byte)0;
+
+            for (; LevelLines[offset] != "AreaAddrOffsets:"; offset++) { }
+            temp = offset;
+            for (; LevelLines[offset] != ""; offset++) { }
+            worlds = (byte)(offset - temp);
+
+        }*/
+
+        void NormalizeSpawns() {
+            for (byte spawnid = 0; spawnid < 8; spawnid++) {
+                PlayerSpawns[spawnid] = new Spawn(spawningRAW[7 + spawnid], spawningRAW[16 + spawnid] != 0x00, spawnid == 6);
+            }
+        }
+
+        void NormalizeTimers() {
+            for (byte timerid = 0; timerid < 4; timerid++) {
+                Timers[timerid] = (ushort)(100 * spawningRAW[23 + timerid]);
+            }
+        }
+
+        //NormalizePalettes();
+        //BuildMetatiles();
+        //NormalizeScenery();
+        //NormalizeEnemies();
+
+        NormalizeSpawns();
+        NormalizeTimers();
+
+        //NormalizeLevels();  // this one uses EVERYTHING ELSE and it makes me cry
     }
 
-    public Bitmap GetMetatile(byte AreaType, byte AreaStyle, byte MetatileID, bool CastleOverride){
+    public Bitmap GetMetatile(byte AreaType, byte AreaStyle, byte MetatileID, bool CastleOverride) {
         if (CastleOverride) return Metatiles[(ushort)(0x1000 | MetatileID)];
         if ((MetatileID & 0xc0) != 0) AreaStyle = 0;
         else if (AreaStyle != 0) AreaType = 0;
@@ -216,8 +439,8 @@ public class Common {
     public Bitmap[]? GetBackgroundMetatiles(byte Background, byte Collumn, byte AreaType, byte AreaStyle, bool CastleOverride) {
         Bitmap[] thisCollumn = new Bitmap[3];
         if (BackSceneryData[Background, Collumn] == null) return null;
-        for (byte Metatile = 0; Metatile < 3; Metatile++){   
-           thisCollumn[Metatile] = GetMetatile(AreaType, AreaStyle, BackSceneryMetatiles[BackSceneryData[Background, Collumn].Element].Data[Metatile], CastleOverride);
+        for (byte Metatile = 0; Metatile < 3; Metatile++) {
+            thisCollumn[Metatile] = GetMetatile(AreaType, AreaStyle, BackSceneryMetatiles[BackSceneryData[Background, Collumn].Element].Data[Metatile], CastleOverride);
         }
         return thisCollumn;
     }
@@ -243,11 +466,11 @@ public class Common {
 
     public class Tile {
         public byte[,] Data = new byte[8, 8];
-        public Tile (ref byte[] CHRRAW, ushort peek) {
+        public Tile(ref byte[] CHRRAW, ushort peek) {
             for (byte row = 0; row < 8; row++, peek++) {
                 for (byte col = 7; col != 0xff; col--) {    // underflow catching
                     Data[row, 7 - col] = (byte)((CHRRAW[peek] & (0b1 << col)) == 0 ? 0 : 1);
-                    Data[row, 7 - col] |= (byte)((CHRRAW[peek+8] & (0b1 << col)) == 0 ? 0 : 2);
+                    Data[row, 7 - col] |= (byte)((CHRRAW[peek + 8] & (0b1 << col)) == 0 ? 0 : 2);
                 }
             }
         }
@@ -261,19 +484,19 @@ public class Common {
         }
     }
 
-    void ProcessCHR(ref Tile[,] ProcessedCHR, ref byte[] CHRRAW){
+    void ProcessCHR(ref Tile[,] ProcessedCHR, ref byte[] CHRRAW) {
         for (ushort _Tile = 0; _Tile < 512; _Tile++) {
             ProcessedCHR[_Tile >> 8, _Tile & 0xff] = new Tile(ref CHRRAW, (ushort)(_Tile << 4));
         }
     }
 
-    public Tile GetTile(bool isOAM, byte ID){
+    public Tile GetTile(bool isOAM, byte ID) {
         return ProcessedCHR[!isOAM ? 1 : 0, ID];
     }
-    public Tile GetTile(bool isOAM, byte x, byte y){
-        return ProcessedCHR[!isOAM ?  1 : 0, (y << 4) | x];
+    public Tile GetTile(bool isOAM, byte x, byte y) {
+        return ProcessedCHR[!isOAM ? 1 : 0, (y << 4) | x];
     }
-    public Tile GetTile(ushort ID){
+    public Tile GetTile(ushort ID) {
         return ProcessedCHR[ID >> 8, ID & 0xff];
     }
 
