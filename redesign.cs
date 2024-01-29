@@ -19,7 +19,7 @@ public class Program {
 }
 
 public class Common {
-    const byte
+        const byte
             mushroomblock = 0,
             coinblock = 1,
             hiddencoinblock = 2,
@@ -94,113 +94,118 @@ public class Common {
 
 
 
-    const byte FGPositionSoftLimit = 0x0b;
+        const byte FGPositionSoftLimit = 0x0b;
 
-    Tile[,] ProcessedCHR = new Tile[2, 256];
-    Spawn[] PlayerSpawns = new Spawn[8];
-    ushort[] Timers = new ushort[4];
+        Tile[,] ProcessedCHR = new Tile[2, 256];
+        Spawn[] PlayerSpawns = new Spawn[8];
+        ushort[] Timers = new ushort[4];
 
-    Palette[,] AreaPalettes = new Palette[4, 4];
-    Palette[,] EnemyPalettes = new Palette[4, 4];
-    Palette[] AreaStylePalettes = new Palette[3];
-    Palette BowserPalette;
+        Palette[,] AreaPalettes = new Palette[4, 4];
+        Palette[,] EnemyPalettes = new Palette[4, 4];
+        Palette[] AreaStylePalettes = new Palette[3];
+        Palette BowserPalette;
 
-    Dictionary<ushort, Bitmap> Metatiles = [];
-    Dictionary<ushort, Bitmap> EnemiesIMG = [];
+        Dictionary<ushort, Bitmap> Metatiles = [];
+        Dictionary<ushort, Bitmap> EnemiesIMG = [];
 
-    private BackgroundItem[,] BackSceneryData = new BackgroundItem[3, 48];
-    private BackgroundElement[] BackSceneryMetatiles = new BackgroundElement[12];
+        private BackgroundItem[,] BackSceneryData = new BackgroundItem[3, 48];
+        private BackgroundElement[] BackSceneryMetatiles = new BackgroundElement[12];
 
-    private byte[,] Foregrounds = new byte[3, 13];
-    public ushort[] TerrainPatterns = new ushort[16];
-    public byte[] TerrainMetatiles = new byte[4];
+        private byte[,] Foregrounds = new byte[3, 13];
+        public ushort[] TerrainPatterns = new ushort[16];
+        public byte[] TerrainMetatiles = new byte[4];
 
-    struct AreaObject {
-        public byte x, y, id;  // page position and id
-        public bool pageflag;
+        public List<Area> Areas = [];
+        public List<List<Enemy>> Enemies = [];
 
-        public AreaObject(byte xy, byte id) : this() {
-            this.x = (byte)(xy >> 4);
-            this.y = (byte)(xy & 0x0f);
-            this.id = (byte)(xy & 0x7f);
-            this.pageflag = (id & 0x80) == 0x80;
+        List<byte[]> Worlds = [];
+        byte[] EnemyAddrHOffsets = new byte[4];
+        byte[] AreaDataHOffsets = new byte[4];
+
+        public struct AreaObject {
+            public byte x, y, id;  // page position and id
+            public bool pageflag;
+
+            public AreaObject(byte xy, byte id) : this() {
+                this.x = (byte)(xy >> 4);
+                this.y = (byte)(xy & 0x0f);
+                this.id = (byte)(xy & 0x7f);
+                this.pageflag = (id & 0x80) == 0x80;
+            }
         }
-    }
 
-    struct AreaPointer {
-        byte world, page, area_id;
+        public struct AreaPointer {
+            byte world, page, area_id;
 
-        public AreaPointer(byte pointer, ref byte area_id) : this() {
-            this.world = (byte)(pointer >> 5);
-            this.page = (byte)(pointer & 0x1f);
-            this.page = area_id;
+            public AreaPointer(byte pointer, ref byte area_id) : this() {
+                this.world = (byte)(pointer >> 5);
+                this.page = (byte)(pointer & 0x1f);
+                this.page = area_id;
+            }
         }
-    }
 
-    struct Enemy {
-        byte x, y, id;  // enemy position
-        AreaPointer? pointer;
-        bool pageflag;
-        bool hardmode;
+        public struct Enemy {
+            byte x, y, id;  // enemy position
+            AreaPointer? pointer;
+            bool pageflag;
+            bool hardmode;
 
-        public Enemy(byte xy, byte id, byte? pointer) : this() {
-            this.x = (byte)(xy >> 4);
-            this.y = (byte)(xy & 0x0f);
-            this.id = (byte)(xy & 0x3f);
-            this.hardmode = (id & 0x40) == 0x40;
-            this.pageflag = (id & 0x80) == 0x80;
-            if (this.pointer != null) {
-                this.pointer = new AreaPointer(pointer ?? 0, ref id);
+            public Enemy(byte xy, byte id, byte? pointer) : this() {
+                this.x = (byte)(xy >> 4);
+                this.y = (byte)(xy & 0x0f);
+                this.id = (byte)(xy & 0x3f);
+                this.hardmode = (id & 0x40) == 0x40;
+                this.pageflag = (id & 0x80) == 0x80;
+                if (this.pointer != null) {
+                    this.pointer = new AreaPointer(pointer ?? 0, ref id);
+                }
+            }
+        }
+
+        public class Area {
+            public List<AreaObject> Objects;
+            public byte Foreground, Background, Terrain, SpawnID;
+            public bool introarea, spawndeath, playerwalk;
+            public Spawn YPOS;
+            public ushort Timer;
+
+            public Area(Common parent, List<AreaObject> objects, byte yPosition, ushort timer, byte foreground, byte background, byte terrain) {
+                YPOS = parent.PlayerSpawns[yPosition];
+                Objects = objects;
+                Timer = timer;
+                Foreground = foreground;
+                Background = background;
+                Terrain = terrain;
+
+                if (YPOS.isintro) {
+                    introarea = true;
+                    spawndeath = false;
+                    playerwalk = !YPOS.hasBGdata;
+                } else {
+                    introarea = false;
+                    spawndeath = timer == 0;
+                    playerwalk = false;
+                }
             }
         }
 
 
-    }
+        struct LevelArea {
+            Area AreaData;
+            Enemy EnemyData;
+        }
 
-    class Area {
-        List<AreaObject> Objects;
-        byte Foreground, Background, Terrain;
-
-        bool introarea;
-        bool spawndeath;
-        bool playerwalk;
-
-        Spawn YPOS;
-        ushort Timer;
-        public Area(List<AreaObject> _Objects, ref Spawn _YPOS, ref ushort _Timer, byte _Foreground, byte _Background, byte _Terrain) {
-            Objects = _Objects; YPOS = _YPOS; Timer = _Timer; Foreground = _Foreground; Background = _Background; Terrain = _Terrain;
-            if (_YPOS.isintro) {
-                introarea = true;
-                spawndeath = false;
-                playerwalk = !YPOS.hasBGdata;
-            } else {
-                introarea = false;
-                spawndeath = Timer == 0;
-                playerwalk = false;
+        public struct Spawn {
+            byte y;
+            public bool hasBGdata, isintro;
+            public Spawn(byte y, bool hasBGdata, bool isintro) : this() {
+                this.y = y; this.hasBGdata = hasBGdata; this.isintro = isintro;
             }
         }
-    }
-
-    struct LevelArea {
-        Area AreaData;
-        Enemy EnemyData;
-    }
-
-    struct Spawn {
-        byte y;
-        public bool hasBGdata, isintro;
-        public Spawn(byte y, bool hasBGdata, bool isintro) : this() {
-            this.y = y; this.hasBGdata = hasBGdata; this.isintro = isintro;
-        }
-    }
-
-    Dictionary<byte, Area> Areas;
-    Dictionary<byte, List<Enemy>> Enemies;
-
-    List<List<LevelArea>> Worlds;
 
     public Common(string[] args) {
         byte[] CHRRAW, PalettesRAW, MetatilesRAW, SceneryRAW, EnemyRAW, spawningRAW;
+        string[] LevelASM = File.ReadAllLines(args.Length == 0 ? "leveldata.asm" : args[6]);
         try {
             CHRRAW = File.ReadAllBytes(args.Length == 0 ? ".CHR" : args[0]);
             PalettesRAW = File.ReadAllBytes(args.Length == 0 ? "palettes.bin" : args[1]);
@@ -379,7 +384,7 @@ public class Common {
                 thisObjects.Append(new AreaObject(LevelData[offset], LevelData[offset + 1]));
             }
 
-            return new Area(thisObjects, ref PlayerSpawns[thisYpos], ref thisTimer, thisForeground, thisBG, thisTerrain);
+            return new Area(this, thisObjects, thisYpos, thisTimer, thisForeground, thisBG, thisTerrain);
 
         }
 
@@ -388,24 +393,59 @@ public class Common {
 
             for (ushort offset = 0; offset < EnemyData.Length;) {
                 // expect IndexError here
-                thisEnemies.Add(new Enemy(EnemyData[offset], EnemyData[offset + 1], ((EnemyData[offset] & 0x0f) == 0x0e ? EnemyData[offset + 2] : null)));
+                thisEnemies.Add(new Enemy(EnemyData[offset], EnemyData[offset + 1], (EnemyData[offset] & 0x0f) == 0x0e ? EnemyData[offset + 2] : null));
                 offset += (ushort)((EnemyData[offset] & 0x0f) == 0x0e ? 3 : 2);
             }
 
             return thisEnemies;
         }
 
-        /*void NormalizeLevels() {
-            List<string> LevelLines = LevelASM.Split('\n').ToList();
+        void NormalizeLevels() {
             int offset = 0, temp = 0;
-            byte worlds = (byte)0;
+            byte worlds = 0;
 
-            for (; LevelLines[offset] != "AreaAddrOffsets:"; offset++) { }
-            temp = offset;
-            for (; LevelLines[offset] != ""; offset++) { }
-            worlds = (byte)(offset - temp);
+            for (; LevelASM[offset] != "AreaAddrOffsets:"; offset++) { }
+            temp = ++offset;    // points to first world
+            for (; LevelASM[offset] != "; END OF AreaAddrOffsets"; offset++) { }
+            
+            worlds = (byte)(offset - temp);   // points to after last world
 
-        }*/
+            for (byte world = 0; world < worlds; world++) {
+                Worlds.Add(Common.PsuedoAssemble(LevelASM[temp + world]));
+            }
+
+            for (; LevelASM[offset] != "EnemyAddrHOffsets:"; offset++) { }
+            EnemyAddrHOffsets = Common.PsuedoAssemble(LevelASM[++offset]);
+            for (; LevelASM[offset] != "AreaDataHOffsets:"; offset++) { }
+            EnemyAddrHOffsets = Common.PsuedoAssemble(LevelASM[++offset]);
+            for (; LevelASM[offset] != "; ENEMY DATA BEGIN"; offset++) { }
+
+            byte progress = 0;
+
+            while (LevelASM[offset] != "; OBJECT DATA BEGIN") {
+                while (!LevelASM[offset].Contains(".db")) { offset++; }
+                
+                List<byte> thisbinary = [];
+                while (!LevelASM[offset].Contains(".db $ff")) {
+                    thisbinary.AddRange(Common.PsuedoAssemble(LevelASM[offset++]));
+                }
+                offset++;
+                while (!(LevelASM[offset] == "; OBJECT DATA BEGIN" || LevelASM[offset].Contains(".db"))) ++offset;
+                Enemies[progress++] = NormalizeEnemyData([.. thisbinary]);
+            }
+            progress = 0;
+            while (LevelASM[offset] != "; END") {
+                while (!LevelASM[offset].Contains(".db")) { offset++; }
+
+                List<byte> thisbinary = [];
+                while (!LevelASM[offset].Contains(".db $fd")) {
+                    thisbinary.AddRange(Common.PsuedoAssemble(LevelASM[offset++]));
+                }
+                offset++;
+                while (!(LevelASM[offset] == "; END" || LevelASM[offset].Contains(".db"))) ++offset;
+                Areas[progress++] = NormalizeAreaData([.. thisbinary]);
+            }
+        }
 
         void NormalizeSpawns() {
             for (byte spawnid = 0; spawnid < 8; spawnid++) {
@@ -426,8 +466,7 @@ public class Common {
 
         NormalizeSpawns();
         NormalizeTimers();
-
-        //NormalizeLevels();  // this one uses EVERYTHING ELSE and it makes me cry
+        NormalizeLevels();  // this one uses EVERYTHING ELSE and it makes me cry
     }
 
     public Bitmap GetMetatile(byte AreaType, byte AreaStyle, byte MetatileID, bool CastleOverride) {
@@ -462,6 +501,14 @@ public class Common {
             Return[Metatile] = GetMetatile(AreaType, AreaStyle, TerrainMetatiles[AreaType], CastleOverride);
         }
         return Return;
+    }
+
+    public List<Enemy> getEnemyData(byte Palette, byte Lower) {
+        return Enemies[EnemyAddrHOffsets[Palette] + Lower];
+    }
+
+    public Area GetAreaData(byte Palette, byte Lower) {
+        return Areas[AreaDataHOffsets[Palette] + Lower];
     }
 
     public class Tile {
@@ -580,4 +627,31 @@ public class Common {
                         Color.FromArgb(0xff, 0x00, 0x00, 0x00), // black        0x3e
                         Color.FromArgb(0xff, 0x00, 0x00, 0x00), // black        0x3f
     ];
+
+    public static byte[] PsuedoAssemble(string asm) {
+        List<byte> byteList = new List<byte>();
+        Func<char, bool> IsHexDigit = (c) => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+
+        for (int i = 0; i < asm.Length; i++) {
+            if (asm[i] == '$') {
+                // Check if there are at least two more characters after '$'
+                if (i + 2 < asm.Length) {
+                    // Check if the next two characters form a valid hex pair
+                    if (IsHexDigit(asm[i + 1]) && IsHexDigit(asm[i + 2])) {
+                        string hexValue = asm.Substring(i + 1, 2);
+                        byteList.Add(Convert.ToByte(hexValue, 16));
+                        i += 2; // Skip the processed hex characters
+                    } else {
+                        // Handle case where '$' is not followed by two valid hex digits
+                        // You might want to log an error or take other appropriate actions here
+                    }
+                } else {
+                    // Handle case where there are not enough characters after '$'
+                    // You might want to log an error or take other appropriate actions here
+                }
+            }
+        }
+
+        return byteList.ToArray();
+    }
 }
