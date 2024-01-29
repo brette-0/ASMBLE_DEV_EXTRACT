@@ -129,7 +129,7 @@ public class Common {
             public AreaObject(byte xy, byte id) : this() {
                 this.x = (byte)(xy >> 4);
                 this.y = (byte)(xy & 0x0f);
-                this.id = (byte)(xy & 0x7f);
+                this.id = (byte)(id & 0x7f);
                 this.pageflag = (id & 0x80) == 0x80;
             }
         }
@@ -381,9 +381,8 @@ public class Common {
             List<AreaObject> thisObjects = [];
 
             for (ushort offset = 2; offset < LevelData.Length; offset += 2) {
-                thisObjects.Append(new AreaObject(LevelData[offset], LevelData[offset + 1]));
+                thisObjects.Add(new AreaObject(LevelData[offset], LevelData[offset + 1]));
             }
-
             return new Area(this, thisObjects, thisYpos, thisTimer, thisForeground, thisBG, thisTerrain);
 
         }
@@ -392,11 +391,9 @@ public class Common {
             List<Enemy> thisEnemies = [];
 
             for (ushort offset = 0; offset < EnemyData.Length;) {
-                // expect IndexError here
                 thisEnemies.Add(new Enemy(EnemyData[offset], EnemyData[offset + 1], (EnemyData[offset] & 0x0f) == 0x0e ? EnemyData[offset + 2] : null));
                 offset += (ushort)((EnemyData[offset] & 0x0f) == 0x0e ? 3 : 2);
             }
-
             return thisEnemies;
         }
 
@@ -417,7 +414,7 @@ public class Common {
             for (; LevelASM[offset] != "EnemyAddrHOffsets:"; offset++) { }
             EnemyAddrHOffsets = Common.PsuedoAssemble(LevelASM[++offset]);
             for (; LevelASM[offset] != "AreaDataHOffsets:"; offset++) { }
-            EnemyAddrHOffsets = Common.PsuedoAssemble(LevelASM[++offset]);
+            AreaDataHOffsets = Common.PsuedoAssemble(LevelASM[++offset]);
             for (; LevelASM[offset] != "; ENEMY DATA BEGIN"; offset++) { }
 
             byte progress = 0;
@@ -431,7 +428,8 @@ public class Common {
                 }
                 offset++;
                 while (!(LevelASM[offset] == "; OBJECT DATA BEGIN" || LevelASM[offset].Contains(".db"))) ++offset;
-                Enemies[progress++] = NormalizeEnemyData([.. thisbinary]);
+                Enemies.Add(NormalizeEnemyData([.. thisbinary]));
+                progress++;
             }
             progress = 0;
             while (LevelASM[offset] != "; END") {
@@ -443,7 +441,8 @@ public class Common {
                 }
                 offset++;
                 while (!(LevelASM[offset] == "; END" || LevelASM[offset].Contains(".db"))) ++offset;
-                Areas[progress++] = NormalizeAreaData([.. thisbinary]);
+                Areas.Add(NormalizeAreaData([.. thisbinary]));
+                progress++;
             }
         }
 
@@ -459,14 +458,14 @@ public class Common {
             }
         }
 
-        //NormalizePalettes();
-        //BuildMetatiles();
-        //NormalizeScenery();
-        //NormalizeEnemies();
+        NormalizePalettes();
+        BuildMetatiles();
+        NormalizeScenery();
+        NormalizeEnemies();
 
         NormalizeSpawns();
         NormalizeTimers();
-        NormalizeLevels();  // this one uses EVERYTHING ELSE and it makes me cry
+        NormalizeLevels();
     }
 
     public Bitmap GetMetatile(byte AreaType, byte AreaStyle, byte MetatileID, bool CastleOverride) {
